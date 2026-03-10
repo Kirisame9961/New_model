@@ -1,0 +1,23 @@
+model:
+  num_elements: 100
+  emb_dim: 32
+  radial_dim: 32
+  hidden_dim: 128
+  num_layers: 3
+  cutoff: 5.0
+
+data:
+  # 请替换为数据准备脚本导出的 processed npz 路径
+  processed_npz: data/processed/oma_mptrj_subset_100000.npz
+
+training:
+  device: cpu
+  output_dir: outputs/mlp_baseline
+  epochs: 20
+  batch_size: 8
+  lr: 1.0e-3
+  weight_decay: 1.0e-6
+  num_workers: 0
+  loss:
+    energy_weight: 1.0
+    force_weight: 10.0
