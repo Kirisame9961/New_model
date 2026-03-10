@@ -1,0 +1,44 @@
+default_dataset: oma_mptrj_100k
+
+datasets:
+  # 方案A：与 OMA 场景更接近——使用 OMA 的标准答案子集（例如 MPtrj 导出的 NPZ）。
+  # 说明：为避免工期过长，默认只取 100k；请将 source_url 改为你们内部或公开可访问的文件地址。
+  oma_mptrj_100k:
+    type: npz
+    family: OMA
+    note: "OMA(MPtrj)标准答案子集，建议用于主对比实验。"
+    source_url: ""
+    raw_filename: "oma_mptrj_subset.npz"
+    output_prefix: "oma_mptrj_subset"
+    max_samples: 100000
+    keys:
+      z: z
+      R: R
+      E: E
+      F: F
+      # 如果有周期性信息可映射以下键（可选）
+      cell: cell
+      pbc: pbc
+
+  # 方案B：快速可用基线（非 OMA，但上手最快）
+  rmd17_aspirin_100k:
+    type: rmd17
+    molecule: aspirin
+    source_url_template: "http://www.quantum-machine.org/gdml/data/npz/rmd17/rmd17_{molecule}.npz"
+    raw_filename_template: "rmd17_{molecule}.npz"
+    max_samples: 100000
+    keys:
+      z: z
+      R: R
+      E: E
+      F: F
+
+split:
+  train_ratio: 0.8
+  val_ratio: 0.1
+  test_ratio: 0.1
+  seed: 42
+
+output:
+  raw_dir: data/raw
+  processed_dir: data/processed
