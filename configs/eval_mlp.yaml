@@ -1,0 +1,21 @@
+data:
+  processed_npz: data/processed/mptrj_10pct_150000.npz
+  split: test
+
+checkpoint:
+  path: outputs/mlp_baseline/best.pt
+
+eval:
+  device: cpu
+  batch_size: 8
+  num_workers: 0
+  output_dir: outputs/eval_mlp
+
+# 如果checkpoint里找不到模型结构配置，可在这里手工提供
+# model_override:
+#   num_elements: 100
+#   emb_dim: 32
+#   radial_dim: 32
+#   hidden_dim: 128
+#   num_layers: 3
+#   cutoff: 5.0

@@ -1,0 +1,38 @@
+model:
+  num_elements: 100
+  emb_dim: 32
+  radial_dim: 32
+  hidden_dim: 128
+  num_layers: 3
+  cutoff: 5.0
+
+data:
+  # 请替换为数据准备脚本导出的 processed npz 路径
+  processed_npz: data/processed/mptrj_10pct_150000.npz
+
+training:
+  device: cpu
+  output_dir: outputs/mlp_baseline
+  seed: 42
+
+  epochs: 80
+  batch_size: 8
+  lr: 1.0e-3
+  weight_decay: 1.0e-6
+  num_workers: 0
+  grad_clip_norm: 5.0
+
+  # scheduler (ReduceLROnPlateau)
+  lr_decay_factor: 0.5
+  lr_decay_patience: 5
+  min_lr: 1.0e-6
+
+  # early stopping
+  early_stopping_patience: 20
+
+  # resume from last checkpoint if needed
+  resume_checkpoint: ""
+
+  loss:
+    energy_weight: 1.0
+    force_weight: 10.0
