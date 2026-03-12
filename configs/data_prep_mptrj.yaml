@@ -1,0 +1,82 @@
+default_dataset: mptrj_10pct
+
+# figshare JSON 原始下载地址（用于 JSON -> NPZ 转换步骤）
+mptrj_json_source_url: "https://figshare.com/ndownloader/files/41619375"
+mptrj_json_filename: "MPtrj_2022.9_full.json"
+
+datasets:
+  # 首选方案：MPtrj 10% 子集（约 150k，推荐主实验起点）
+  # 说明：按 MPtrj 全量约 1.5M 估算，10% 约为 150k。
+  # figshare 原始文件是 JSON；若直接使用该链接，请先用 scripts/convert_mptrj_json.py 转为 NPZ。
+  mptrj_10pct:
+    type: npz
+    family: OMA
+    note: "MPtrj 10% 子集（默认首选）"
+    source_url: ""
+    raw_filename: "mptrj_full.npz"
+    output_prefix: "mptrj_10pct"
+    max_samples: 150000
+    keys:
+      z: z
+      R: R
+      E: E
+      F: F
+      cell: cell
+      pbc: pbc
+
+  # 备选：MPtrj 全量（约 1.5M）
+  mptrj_full:
+    type: npz
+    family: OMA
+    note: "MPtrj 全量数据"
+    source_url: ""
+    raw_filename: "mptrj_full.npz"
+    output_prefix: "mptrj_full"
+    max_samples: 5000000
+    keys:
+      z: z
+      R: R
+      E: E
+      F: F
+      cell: cell
+      pbc: pbc
+
+  # 备选：OMA子集（历史方案，保留）
+  oma_mptrj_100k:
+    type: npz
+    family: OMA
+    note: "OMA(MPtrj)标准答案子集，适合快速迭代。"
+    source_url: ""
+    raw_filename: "oma_mptrj_subset.npz"
+    output_prefix: "oma_mptrj_subset"
+    max_samples: 100000
+    keys:
+      z: z
+      R: R
+      E: E
+      F: F
+      cell: cell
+      pbc: pbc
+
+  # 备选：快速可用基线（非 OMA）
+  rmd17_aspirin_100k:
+    type: rmd17
+    molecule: aspirin
+    source_url_template: "http://www.quantum-machine.org/gdml/data/npz/rmd17/rmd17_{molecule}.npz"
+    raw_filename_template: "rmd17_{molecule}.npz"
+    max_samples: 100000
+    keys:
+      z: z
+      R: R
+      E: E
+      F: F
+
+split:
+  train_ratio: 0.8
+  val_ratio: 0.1
+  test_ratio: 0.1
+  seed: 42
+
+output:
+  raw_dir: data/raw
+  processed_dir: data/processed

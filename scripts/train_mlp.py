@@ -5,12 +5,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 from dataclasses import asdict
 from pathlib import Path
 
+import numpy as np
 import torch
 import yaml
 from torch import nn
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader
 
 from src.new_model.data import MolecularNpzDataset
@@ -28,6 +31,13 @@ def load_config(path: str) -> dict:
         return yaml.safe_load(f)
 
 
+def set_seed(seed: int) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+
 def build_model(cfg: dict) -> MLPotential:
     model_cfg = MLPotentialConfig(**cfg["model"])
     return MLPotential(model_cfg)
@@ -42,7 +52,12 @@ def to_device(batch: dict[str, torch.Tensor], device: torch.device) -> dict[str,
     return {k: v.to(device) for k, v in batch.items()}
 
 
-def compute_loss(outputs: dict[str, torch.Tensor], batch: dict[str, torch.Tensor], energy_weight: float, force_weight: float) -> tuple[torch.Tensor, dict[str, float]]:
+def compute_loss(
+    outputs: dict[str, torch.Tensor],
+    batch: dict[str, torch.Tensor],
+    energy_weight: float,
+    force_weight: float,
+) -> tuple[torch.Tensor, dict[str, float]]:
     e_pred = outputs["energy"]
     f_pred = outputs["forces"]
 
@@ -59,7 +74,15 @@ def compute_loss(outputs: dict[str, torch.Tensor], batch: dict[str, torch.Tensor
     }
 
 
-def run_epoch(model: MLPotential, loader: DataLoader, optimizer: torch.optim.Optimizer | None, device: torch.device, energy_weight: float, force_weight: float) -> dict[str, float]:
+def run_epoch(
+    model: MLPotential,
+    loader: DataLoader,
+    optimizer: torch.optim.Optimizer | None,
+    device: torch.device,
+    energy_weight: float,
+    force_weight: float,
+    grad_clip_norm: float | None,
+) -> dict[str, float]:
     train_mode = optimizer is not None
     model.train(train_mode)
 
@@ -74,6 +97,8 @@ def run_epoch(model: MLPotential, loader: DataLoader, optimizer: torch.optim.Opt
         if train_mode:
             optimizer.zero_grad(set_to_none=True)
             total_loss.backward()
+            if grad_clip_norm is not None and grad_clip_norm > 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip_norm)
             optimizer.step()
 
         for k in metrics:
@@ -85,6 +110,27 @@ def run_epoch(model: MLPotential, loader: DataLoader, optimizer: torch.optim.Opt
     return {k: v / n_batches for k, v in metrics.items()}
 
 
+def save_checkpoint(
+    path: Path,
+    model: MLPotential,
+    optimizer: torch.optim.Optimizer,
+    scheduler: ReduceLROnPlateau,
+    epoch: int,
+    best_val: float,
+    cfg: dict,
+) -> None:
+    ckpt = {
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
+        "scheduler_state_dict": scheduler.state_dict(),
+        "epoch": epoch,
+        "best_val": best_val,
+        "config": cfg,
+        "model_config": asdict(model.config),
+    }
+    torch.save(ckpt, path)
+
+
 def main() -> None:
     args = parse_args()
     cfg = load_config(args.config)
@@ -93,6 +139,8 @@ def main() -> None:
     npz_path = cfg["data"]["processed_npz"]
     output_dir = Path(train_cfg["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    set_seed(int(train_cfg.get("seed", 42)))
 
     device = torch.device(train_cfg.get("device", "cpu"))
     model = build_model(cfg).to(device)
@@ -112,21 +160,68 @@ def main() -> None:
         shuffle=False,
     )
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=float(train_cfg["lr"]), weight_decay=float(train_cfg.get("weight_decay", 0.0)))
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=float(train_cfg["lr"]),
+        weight_decay=float(train_cfg.get("weight_decay", 0.0)),
+    )
+    scheduler = ReduceLROnPlateau(
+        optimizer,
+        mode="min",
+        factor=float(train_cfg.get("lr_decay_factor", 0.5)),
+        patience=int(train_cfg.get("lr_decay_patience", 5)),
+        min_lr=float(train_cfg.get("min_lr", 1e-6)),
+    )
 
     energy_weight = float(train_cfg["loss"]["energy_weight"])
     force_weight = float(train_cfg["loss"]["force_weight"])
     epochs = int(train_cfg["epochs"])
+    grad_clip_norm = train_cfg.get("grad_clip_norm", None)
+    grad_clip_norm = float(grad_clip_norm) if grad_clip_norm is not None else None
 
     history: list[dict[str, float | int]] = []
     best_val = float("inf")
+    best_epoch = 0
+    patience = int(train_cfg.get("early_stopping_patience", 20))
+    resume_path = train_cfg.get("resume_checkpoint", "")
+    start_epoch = 1
 
-    for epoch in range(1, epochs + 1):
-        train_metrics = run_epoch(model, train_loader, optimizer, device, energy_weight, force_weight)
-        val_metrics = run_epoch(model, val_loader, None, device, energy_weight, force_weight)
+    if resume_path:
+        ckpt = torch.load(resume_path, map_location="cpu")
+        model.load_state_dict(ckpt["model_state_dict"])
+        optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+        if "scheduler_state_dict" in ckpt:
+            scheduler.load_state_dict(ckpt["scheduler_state_dict"])
+        start_epoch = int(ckpt.get("epoch", 0)) + 1
+        best_val = float(ckpt.get("best_val", best_val))
+        print(f"[resume] from {resume_path}, start_epoch={start_epoch}, best_val={best_val:.6f}")
+
+    for epoch in range(start_epoch, epochs + 1):
+        train_metrics = run_epoch(
+            model,
+            train_loader,
+            optimizer,
+            device,
+            energy_weight,
+            force_weight,
+            grad_clip_norm,
+        )
+        val_metrics = run_epoch(
+            model,
+            val_loader,
+            None,
+            device,
+            energy_weight,
+            force_weight,
+            grad_clip_norm=None,
+        )
+
+        scheduler.step(val_metrics["loss"])
+        lr_now = float(optimizer.param_groups[0]["lr"])
 
         row = {
             "epoch": epoch,
+            "lr": lr_now,
             "train_loss": train_metrics["loss"],
             "train_loss_e": train_metrics["loss_e"],
             "train_loss_f": train_metrics["loss_f"],
@@ -137,21 +232,21 @@ def main() -> None:
         history.append(row)
         print(json.dumps(row, ensure_ascii=False))
 
-        ckpt = {
-            "model_state_dict": model.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict(),
-            "epoch": epoch,
-            "config": cfg,
-            "model_config": asdict(model.config),
-        }
-        torch.save(ckpt, output_dir / "last.pt")
+        save_checkpoint(output_dir / "last.pt", model, optimizer, scheduler, epoch, best_val, cfg)
 
         if val_metrics["loss"] < best_val:
             best_val = val_metrics["loss"]
-            torch.save(ckpt, output_dir / "best.pt")
+            best_epoch = epoch
+            save_checkpoint(output_dir / "best.pt", model, optimizer, scheduler, epoch, best_val, cfg)
 
-    (output_dir / "history.json").write_text(json.dumps(history, indent=2, ensure_ascii=False), encoding="utf-8")
-    print(f"[done] training completed. best_val={best_val:.6f}")
+        if patience > 0 and (epoch - best_epoch) >= patience:
+            print(f"[early-stop] no val improvement for {patience} epochs. stop at epoch={epoch}")
+            break
+
+    (output_dir / "history.json").write_text(
+        json.dumps(history, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    print(f"[done] training completed. best_val={best_val:.6f}, best_epoch={best_epoch}")
 
 
 if __name__ == "__main__":

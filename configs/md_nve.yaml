@@ -1,0 +1,13 @@
+checkpoint: outputs/mlp_baseline/best.pt
+data_npz: data/processed/mptrj_10pct_150000.npz
+split: test
+index: 0
+
+integrator:
+  steps: 200
+  dt: 0.5
+  temperature: 300.0
+  seed: 42
+
+device: cpu
+output: outputs/md_nve/rollout.npz
